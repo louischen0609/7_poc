@@ -89,9 +89,7 @@ def create_order_draft(customer_name: str, items: list[dict]) -> str:
 
         result = f"客戶: {customer_name}\n"
         result += "\n".join(draft_lines) + "\n"
-        result += f"總價格: {int(total)} 元\n"
-        result += "---\n"
-        result += "你必須將以上所有品項、數量、單價、小計、總價格原封不動顯示給客戶，然後問「訂單內容是否正確？需要修改請告訴我」。禁止省略任何品項。"
+        result += f"總價格: {int(total)} 元"
         return result
     except Exception as e:
         return f"建立訂單草稿時發生錯誤: {str(e)}"
@@ -141,9 +139,7 @@ def preview_final_order(
         result += "\n".join(draft_lines) + "\n"
         result += f"總價格: {int(total)} 元\n"
         result += f"配送方式: {delivery_method}\n"
-        result += f"收款方式: {payment_method}\n"
-        result += "---\n"
-        result += "你必須將以上完整內容顯示給客戶，然後問「以上訂單是否正確？確認請回覆「確認」，需要修改請告訴我」。禁止省略。禁止呼叫 confirm_order。"
+        result += f"收款方式: {payment_method}"
         return result
     except Exception as e:
         return f"預覽訂單時發生錯誤: {str(e)}"

@@ -10,8 +10,6 @@ from agent import agent_executor
 
 ALLOWED_TABLES = {"customer", "product", "orders", "customer_order_detail", "wastage"}
 
-chat_histories: dict[str, list] = {}
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -26,26 +24,17 @@ app = FastAPI(title="AI Customer Service Agent", lifespan=lifespan)
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     session_id = request.session_id or "default"
-    history = chat_histories.setdefault(session_id, [])
-
-    history.append(HumanMessage(content=request.message))
+    config = {"configurable": {"thread_id": session_id}}
 
     try:
-        result = agent_executor.invoke({"messages": history})
-
-        # The agent returns the full message list; grab the last AI message
+        result = agent_executor.invoke(
+            {"messages": [HumanMessage(content=request.message)]},
+            config=config,
+        )
         ai_message = result["messages"][-1]
-        history.append(ai_message)
-
-        # Trim history to last 20 messages to avoid token limits
-        if len(history) > 20:
-            chat_histories[session_id] = history[-20:]
-
         return ChatResponse(reply=ai_message.content)
     except Exception as e:
         print(f"[Chat Error] session={session_id}, error={type(e).__name__}: {e}")
-        # Remove the failed user message from history so it doesn't pollute future calls
-        history.pop()
         return ChatResponse(reply=f"系統處理時發生錯誤，請再試一次。（錯誤：{type(e).__name__}）")
 
 
@@ -101,3 +90,8 @@ async def root():
 @app.get("/admin")
 async def admin():
     return FileResponse("static/admin.html")
+
+
+@app.get("/products")
+async def products():
+    return FileResponse("static/products.html")
