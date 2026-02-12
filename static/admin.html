@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理介面</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; padding: 20px; }
+        h1 { text-align: center; margin-bottom: 20px; color: #333; }
+        .tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 20px; flex-wrap: wrap; }
+        .tab-btn { padding: 10px 20px; border: none; border-radius: 8px; background: #e0e0e0; cursor: pointer; font-size: 14px; font-weight: 500; }
+        .tab-btn.active { background: #4a90d9; color: #fff; }
+        .tab-btn:hover { opacity: 0.85; }
+        .table-container { max-width: 1000px; margin: 0 auto; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.1); padding: 20px; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #4a90d9; color: #fff; padding: 10px 12px; text-align: left; font-size: 14px; }
+        td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+        tr:hover { background: #f5f8ff; }
+        tr.clickable { cursor: pointer; }
+        tr.clickable:hover { background: #e8f0fe; }
+        .empty { text-align: center; padding: 40px; color: #999; }
+        .refresh-btn { display: block; margin: 20px auto 0; padding: 8px 20px; background: #4a90d9; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
+        .refresh-btn:hover { background: #3a7bc8; }
+        .nav { text-align: center; margin-bottom: 16px; }
+        .nav a { color: #4a90d9; text-decoration: none; font-size: 14px; margin: 0 8px; }
+        .nav a:hover { text-decoration: underline; }
+        .order-detail { max-width: 1000px; margin: 0 auto; }
+        .order-header { background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.1); padding: 20px; margin-bottom: 16px; }
+        .order-header h2 { color: #333; margin-bottom: 12px; }
+        .order-info { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .order-info span { color: #666; }
+        .order-info strong { color: #333; }
+        .back-btn { background: none; border: none; color: #4a90d9; cursor: pointer; font-size: 14px; margin-bottom: 12px; }
+        .back-btn:hover { text-decoration: underline; }
+        .search-bar { max-width: 1000px; margin: 0 auto 16px; display: flex; gap: 8px; }
+        .search-bar input { flex: 1; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; outline: none; }
+        .search-bar input:focus { border-color: #4a90d9; }
+        .search-bar button { padding: 10px 20px; background: #4a90d9; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <a href="/">← 回到客服聊天</a>
+        <a href="/admin">資料總覽</a>
+        <a href="#" id="nav-order-search">訂單查詢</a>
+    </div>
+    <h1>管理介面</h1>
+
+    <!-- 資料總覽 -->
+    <div id="overview-section">
+        <div class="tabs">
+            <button class="tab-btn active" data-table="customer">客戶</button>
+            <button class="tab-btn" data-table="product">產品</button>
+            <button class="tab-btn" data-table="orders">訂單</button>
+            <button class="tab-btn" data-table="customer_order_detail">訂單明細</button>
+            <button class="tab-btn" data-table="wastage">損耗</button>
+        </div>
+        <div class="table-container" id="table-container"></div>
+        <button class="refresh-btn" id="refresh-btn">重新整理</button>
+    </div>
+
+    <!-- 訂單查詢 -->
+    <div id="order-search-section" class="hidden">
+        <div class="search-bar">
+            <input type="text" id="order-search-input" placeholder="輸入訂單編號或客戶名稱搜尋..." autocomplete="off">
+            <button id="order-search-btn">搜尋</button>
+        </div>
+        <div class="table-container" id="order-list-container"></div>
+        <div id="order-detail-container" class="hidden order-detail"></div>
+    </div>
+
+    <script>
+        let currentTable = "customer";
+        let currentSection = "overview";
+
+        const COLUMN_NAMES = {
+            customer: { customer_id: "客戶ID", customer_name: "名稱", customer_address: "地址", customer_phone: "電話" },
+            product: { product_id: "產品ID", product_name: "名稱", unit: "單位", price: "價格", stock: "庫存", safety_stock: "安全庫存", supplier: "供應商", specification: "規格" },
+            orders: { order_id: "訂單ID", customer_name: "客戶名稱", delivery_method: "配送方式", payment_method: "收款方式", total_price: "總價格", is_delivered: "是否已配送" },
+            customer_order_detail: { id: "ID", customer_id: "客戶ID", product_id: "產品ID", order_id: "訂單ID", quantity: "訂購數量", unit_price: "單價" },
+            wastage: { id: "ID", product_name: "產品名稱", product_id: "產品ID", loss_quantity: "損耗數量" }
+        };
+
+        function showSection(section) {
+            currentSection = section;
+            document.getElementById("overview-section").classList.toggle("hidden", section !== "overview");
+            document.getElementById("order-search-section").classList.toggle("hidden", section !== "order-search");
+        }
+
+        // 資料總覽
+        async function loadTable(tableName) {
+            currentTable = tableName;
+            document.querySelectorAll(".tab-btn").forEach(btn => {
+                btn.classList.toggle("active", btn.dataset.table === tableName);
+            });
+
+            const container = document.getElementById("table-container");
+            container.innerHTML = "<div class='empty'>載入中...</div>";
+
+            try {
+                const res = await fetch(`/api/admin/table/${tableName}`);
+                const data = await res.json();
+
+                if (!data.rows || data.rows.length === 0) {
+                    container.innerHTML = "<div class='empty'>此表格目前沒有資料</div>";
+                    return;
+                }
+
+                const columns = data.columns;
+                const colNames = COLUMN_NAMES[tableName] || {};
+                let html = "<table><thead><tr>";
+                columns.forEach(col => {
+                    html += `<th>${colNames[col] || col}</th>`;
+                });
+                html += "</tr></thead><tbody>";
+                data.rows.forEach(row => {
+                    const isOrder = tableName === "orders";
+                    html += `<tr class="${isOrder ? 'clickable' : ''}" ${isOrder ? `onclick="viewOrder(${row.order_id})"` : ''}>`;
+                    columns.forEach(col => {
+                        let val = row[col] !== null ? row[col] : "";
+                        if (col === "is_delivered") val = val ? "已配送" : "未配送";
+                        html += `<td>${val}</td>`;
+                    });
+                    html += "</tr>";
+                });
+                html += "</tbody></table>";
+                if (tableName === "orders") {
+                    html += "<div style='text-align:center;color:#999;font-size:12px;margin-top:8px;'>點擊訂單列可查看品項明細</div>";
+                }
+                container.innerHTML = html;
+            } catch (err) {
+                container.innerHTML = "<div class='empty'>載入失敗，請稍後再試</div>";
+            }
+        }
+
+        // 訂單查詢
+        async function searchOrders() {
+            const query = document.getElementById("order-search-input").value.trim();
+            const listContainer = document.getElementById("order-list-container");
+            const detailContainer = document.getElementById("order-detail-container");
+            detailContainer.classList.add("hidden");
+            listContainer.innerHTML = "<div class='empty'>搜尋中...</div>";
+
+            try {
+                const res = await fetch("/api/admin/table/orders");
+                const data = await res.json();
+                let rows = data.rows || [];
+
+                if (query) {
+                    rows = rows.filter(r =>
+                        String(r.order_id) === query ||
+                        (r.customer_name && r.customer_name.includes(query))
+                    );
+                }
+
+                if (rows.length === 0) {
+                    listContainer.innerHTML = "<div class='empty'>找不到符合的訂單</div>";
+                    return;
+                }
+
+                let html = "<table><thead><tr><th>訂單ID</th><th>客戶名稱</th><th>配送方式</th><th>收款方式</th><th>總價格</th><th>配送狀態</th></tr></thead><tbody>";
+                rows.forEach(row => {
+                    html += `<tr class="clickable" onclick="viewOrder(${row.order_id})">`;
+                    html += `<td>${row.order_id}</td><td>${row.customer_name}</td><td>${row.delivery_method}</td><td>${row.payment_method}</td><td>${row.total_price} 元</td><td>${row.is_delivered ? "已配送" : "未配送"}</td>`;
+                    html += "</tr>";
+                });
+                html += "</tbody></table>";
+                html += "<div style='text-align:center;color:#999;font-size:12px;margin-top:8px;'>點擊訂單列可查看品項明細</div>";
+                listContainer.innerHTML = html;
+            } catch (err) {
+                listContainer.innerHTML = "<div class='empty'>搜尋失敗</div>";
+            }
+        }
+
+        // 查看訂單明細
+        async function viewOrder(orderId) {
+            const detailContainer = document.getElementById("order-detail-container") ||
+                                     document.getElementById("table-container");
+
+            // If in overview, switch to order search to show detail
+            if (currentSection === "overview") {
+                showSection("order-search");
+                document.getElementById("order-list-container").innerHTML = "";
+            }
+
+            const dc = document.getElementById("order-detail-container");
+            dc.classList.remove("hidden");
+            dc.innerHTML = "<div class='empty'>載入中...</div>";
+
+            try {
+                const res = await fetch(`/api/admin/order/${orderId}`);
+                const data = await res.json();
+                const order = data.order;
+                const items = data.items;
+
+                let html = `
+                    <button class="back-btn" onclick="backToList()">← 返回列表</button>
+                    <div class="order-header">
+                        <h2>訂單 #${order.order_id}</h2>
+                        <div class="order-info">
+                            <div><span>客戶：</span><strong>${order.customer_name}</strong></div>
+                            <div><span>總價格：</span><strong>${order.total_price} 元</strong></div>
+                            <div><span>配送方式：</span><strong>${order.delivery_method}</strong></div>
+                            <div><span>收款方式：</span><strong>${order.payment_method}</strong></div>
+                            <div><span>配送狀態：</span><strong>${order.is_delivered ? "已配送" : "未配送"}</strong></div>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <h3 style="margin-bottom:12px;">訂單品項</h3>
+                        <table>
+                            <thead><tr><th>產品名稱</th><th>數量</th><th>單位</th><th>單價</th><th>小計</th></tr></thead>
+                            <tbody>`;
+                items.forEach(item => {
+                    html += `<tr>
+                        <td>${item.product_name}</td>
+                        <td>${item.quantity}</td>
+                        <td>${item.unit}</td>
+                        <td>${item.unit_price} 元</td>
+                        <td>${item.subtotal} 元</td>
+                    </tr>`;
+                });
+                html += `</tbody></table></div>`;
+                dc.innerHTML = html;
+            } catch (err) {
+                dc.innerHTML = "<div class='empty'>載入訂單明細失敗</div>";
+            }
+        }
+
+        function backToList() {
+            document.getElementById("order-detail-container").classList.add("hidden");
+            if (currentSection === "order-search") {
+                searchOrders();
+            } else {
+                loadTable("orders");
+            }
+        }
+
+        // Event listeners
+        document.querySelectorAll(".tab-btn").forEach(btn => {
+            btn.addEventListener("click", () => { showSection("overview"); loadTable(btn.dataset.table); });
+        });
+        document.getElementById("refresh-btn").addEventListener("click", () => loadTable(currentTable));
+        document.getElementById("nav-order-search").addEventListener("click", (e) => {
+            e.preventDefault();
+            showSection("order-search");
+            searchOrders();
+        });
+        document.getElementById("order-search-btn").addEventListener("click", searchOrders);
+        document.getElementById("order-search-input").addEventListener("keydown", (e) => {
+            if (e.key === "Enter") searchOrders();
+        });
+
+        loadTable("customer");
+    </script>
+</body>
+</html>
