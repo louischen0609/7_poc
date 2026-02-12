@@ -87,11 +87,11 @@ def create_order_draft(customer_name: str, items: list[dict]) -> str:
                 f"（單價: {product['price']}元，小計: {int(subtotal)}元）"
             )
 
-        result = "📋 訂單草稿：\n"
-        result += f"客戶: {customer_name}\n"
+        result = f"客戶: {customer_name}\n"
         result += "\n".join(draft_lines) + "\n"
         result += f"總價格: {int(total)} 元\n"
-        result += "\n請將以上完整內容顯示給客戶，並問「訂單內容是否正確？需要修改請告訴我」"
+        result += "---\n"
+        result += "你必須將以上所有品項、數量、單價、小計、總價格原封不動顯示給客戶，然後問「訂單內容是否正確？需要修改請告訴我」。禁止省略任何品項。"
         return result
     except Exception as e:
         return f"建立訂單草稿時發生錯誤: {str(e)}"
@@ -99,7 +99,59 @@ def create_order_draft(customer_name: str, items: list[dict]) -> str:
         conn.close()
 
 
-# ============ Function Call 3: 確認訂單並選擇配送 ============
+# ============ Function Call 3: 預覽最終訂單 ============
+
+@tool
+def preview_final_order(
+    customer_name: str,
+    items: list[dict],
+    delivery_method: str,
+    payment_method: str,
+) -> str:
+    """【步驟 3b】客戶告知配送和收款方式後，呼叫此工具產生含配送收款的完整訂單摘要。
+    不會寫入資料庫，只是讓客戶做最終確認。客戶確認後才呼叫 confirm_order。
+    items: list of {product_name, quantity}。delivery_method: 專車/郵寄。payment_method: 現金/匯款/貨到付款。"""
+    conn = get_connection()
+    try:
+        customer = conn.execute(
+            "SELECT customer_id FROM customer WHERE customer_name = ?",
+            (customer_name,),
+        ).fetchone()
+        if not customer:
+            return f"找不到客戶「{customer_name}」，請先建立客戶資料。"
+
+        total = 0
+        draft_lines = []
+        for item in items:
+            product = conn.execute(
+                "SELECT product_name, price, stock, unit FROM product WHERE product_name LIKE ?",
+                (f"%{item['product_name']}%",),
+            ).fetchone()
+            if not product:
+                return f"找不到產品「{item['product_name']}」。"
+            if product["stock"] < item["quantity"]:
+                return f"產品「{product['product_name']}」庫存不足（庫存: {product['stock']}，需要: {item['quantity']}）。"
+            subtotal = product["price"] * item["quantity"]
+            total += subtotal
+            draft_lines.append(
+                f"- {product['product_name']} x {item['quantity']}{product['unit']}（小計: {int(subtotal)}元）"
+            )
+
+        result = f"客戶: {customer_name}\n"
+        result += "\n".join(draft_lines) + "\n"
+        result += f"總價格: {int(total)} 元\n"
+        result += f"配送方式: {delivery_method}\n"
+        result += f"收款方式: {payment_method}\n"
+        result += "---\n"
+        result += "你必須將以上完整內容顯示給客戶，然後問「以上訂單是否正確？確認請回覆「確認」，需要修改請告訴我」。禁止省略。禁止呼叫 confirm_order。"
+        return result
+    except Exception as e:
+        return f"預覽訂單時發生錯誤: {str(e)}"
+    finally:
+        conn.close()
+
+
+# ============ Function Call 4: 確認訂單寫入資料庫 ============
 
 @tool
 def confirm_order(
@@ -108,10 +160,8 @@ def confirm_order(
     delivery_method: str,
     payment_method: str,
 ) -> str:
-    """【下單步驟三】客戶確認訂單內容和配送方式後，正式建立訂單寫入資料庫。
-    items 是列表，每個元素包含 product_name(str) 和 quantity(int)。
-    delivery_method: 專車 或 郵寄。
-    Finalize and save order to DB after customer confirmation."""
+    """【步驟 3c】客戶已確認最終訂單後，呼叫此工具正式寫入資料庫。必須在 preview_final_order 之後、客戶說「確認」之後才能呼叫。
+    items: list of {product_name, quantity}。delivery_method: 專車/郵寄。payment_method: 現金/匯款/貨到付款。"""
     conn = get_connection()
     try:
         customer = conn.execute(
