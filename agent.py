@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import logging
 from typing import Annotated, Literal
 from typing_extensions import TypedDict
 
@@ -25,6 +26,8 @@ from tools import (
 )
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # ============ State Schema ============
 
@@ -134,7 +137,51 @@ def handle_idle(state: OrderState, user_msg: str) -> dict:
     return {"messages": [ai_msg]}
 
 
+def _parse_customer_info_regex(text: str) -> dict | None:
+    """Try to parse customer info from common formats like '陳大明，台北101，0972123456'."""
+    parts = re.split(r'[，,、\s]+', text.strip())
+    if len(parts) < 3:
+        return None
+    # Find the phone part (contains 8+ digits)
+    phone = None
+    phone_idx = None
+    for i, p in enumerate(parts):
+        if re.search(r'\d{8,}', p):
+            phone = p
+            phone_idx = i
+            break
+    if phone is None:
+        return None
+    remaining = [p for i, p in enumerate(parts) if i != phone_idx and p]
+    if len(remaining) < 2:
+        return None
+    # First remaining part is name, rest joined as address
+    name = remaining[0]
+    address = "".join(remaining[1:])
+    return {"customer_name": name, "customer_address": address, "customer_phone": phone}
+
+
 def handle_collect_info(state: OrderState, user_msg: str) -> dict:
+    # 1) Try regex first (fast, no API call)
+    parsed = _parse_customer_info_regex(user_msg)
+    if parsed:
+        logger.info(f"Parsed customer info via regex: {parsed}")
+        reply = (
+            f"請確認您的資料：\n"
+            f"- 名稱：{parsed['customer_name']}\n"
+            f"- 地址：{parsed['customer_address']}\n"
+            f"- 電話：{parsed['customer_phone']}\n"
+            f"正確請回覆「確認」"
+        )
+        return {
+            "messages": [AIMessage(content=reply)],
+            "workflow_phase": "confirm_info",
+            "customer_name": parsed["customer_name"],
+            "customer_address": parsed["customer_address"],
+            "customer_phone": parsed["customer_phone"],
+        }
+
+    # 2) Fallback to LLM structured output
     try:
         structured_llm = llm.with_structured_output(CustomerInfo)
         info = structured_llm.invoke(
@@ -154,7 +201,8 @@ def handle_collect_info(state: OrderState, user_msg: str) -> dict:
             "customer_address": info.customer_address,
             "customer_phone": info.customer_phone,
         }
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to parse customer info via LLM: {e}", exc_info=True)
         return {
             "messages": [AIMessage(content="抱歉，我無法識別您的資料。請提供您的 名稱、地址、電話。")],
         }
@@ -201,7 +249,8 @@ def handle_collect_items(state: OrderState, user_msg: str) -> dict:
                 f"從以下訊息中提取訂單品項（產品名稱和數量）。訊息：{user_msg}"
             )
             items = [{"product_name": i.product_name, "quantity": i.quantity} for i in parsed.items]
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to parse order items via LLM: {e}", exc_info=True)
             return {
                 "messages": [AIMessage(content="抱歉，我無法解析您的品項。請用格式「產品名*數量」來選購，例如「蘋果*2 牛奶*3」。")],
             }
@@ -251,7 +300,8 @@ def handle_confirm_items(state: OrderState, user_msg: str) -> dict:
                 f"請根據用戶的修改意圖，產生完整的更新後品項列表。"
             )
             merged = [{"product_name": i.product_name, "quantity": i.quantity} for i in parsed.items]
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to parse item modification via LLM: {e}", exc_info=True)
             return {
                 "messages": [AIMessage(content="抱歉，我無法理解您的修改。請告訴我要修改的品項和數量。")],
             }
@@ -297,7 +347,8 @@ def handle_collect_delivery(state: OrderState, user_msg: str) -> dict:
             "delivery_method": info.delivery_method,
             "payment_method": info.payment_method,
         }
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to parse delivery info via LLM: {e}", exc_info=True)
         return {
             "messages": [AIMessage(content="抱歉，我無法識別配送和收款方式。\n請問配送方式要選擇 專車 還是 郵寄？收款方式是 現金、匯款 還是 貨到付款？")],
         }
