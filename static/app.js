@@ -1,6 +1,10 @@
 const messagesDiv = document.getElementById("messages");
 const input = document.getElementById("user-input");
 const sendBtn = document.getElementById("send-btn");
+const resetBtn = document.getElementById("reset-btn");
+
+// Generate unique session ID per page load (refresh = fresh start)
+let sessionId = "s-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
 
 function addMessage(content, role) {
     const div = document.createElement("div");
@@ -9,6 +13,26 @@ function addMessage(content, role) {
     messagesDiv.appendChild(div);
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
     return div;
+}
+
+function showWelcome() {
+    addMessage(
+        "您好！我是客戶服務助手，可以幫您：\n" +
+        "- 查詢產品資訊\n" +
+        "- 下單訂購\n" +
+        "- 查詢訂單\n" +
+        "- 安排配送（專車/郵寄）\n" +
+        "- 記錄損耗\n\n" +
+        "請問有什麼需要幫忙的嗎？",
+        "assistant"
+    );
+}
+
+function resetSession() {
+    sessionId = "s-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+    messagesDiv.innerHTML = "";
+    showWelcome();
+    input.focus();
 }
 
 async function sendMessage() {
@@ -25,7 +49,7 @@ async function sendMessage() {
         const res = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: text }),
+            body: JSON.stringify({ message: text, session_id: sessionId }),
         });
         const data = await res.json();
         thinkingDiv.remove();
@@ -43,17 +67,9 @@ sendBtn.addEventListener("click", sendMessage);
 input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.isComposing) sendMessage();
 });
+resetBtn.addEventListener("click", resetSession);
 
 window.addEventListener("DOMContentLoaded", () => {
-    addMessage(
-        "您好！我是客戶服務助手，可以幫您：\n" +
-        "- 查詢產品資訊\n" +
-        "- 下單訂購\n" +
-        "- 查詢訂單\n" +
-        "- 安排配送（專車/郵寄）\n" +
-        "- 記錄損耗\n\n" +
-        "請問有什麼需要幫忙的嗎？",
-        "assistant"
-    );
+    showWelcome();
     input.focus();
 });

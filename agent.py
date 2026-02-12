@@ -97,14 +97,6 @@ def _is_order_intent(msg: str) -> bool:
     return any(kw in msg for kw in ["下單", "訂購", "我要訂", "下訂", "我要買"])
 
 
-def _parse_items_regex(text: str) -> list[dict] | None:
-    """Try to parse items like '蘋果*2 牛奶*3' using regex."""
-    pattern = r'([\u4e00-\u9fff]+)\s*[\*xX×]\s*(\d+)'
-    matches = re.findall(pattern, text)
-    if not matches:
-        return None
-    return [{"product_name": name, "quantity": int(qty)} for name, qty in matches]
-
 
 def _clean_tool_result(result: str) -> str:
     """Remove embedded LLM instructions (after ---) from tool results."""
@@ -137,51 +129,7 @@ def handle_idle(state: OrderState, user_msg: str) -> dict:
     return {"messages": [ai_msg]}
 
 
-def _parse_customer_info_regex(text: str) -> dict | None:
-    """Try to parse customer info from common formats like '陳大明，台北101，0972123456'."""
-    parts = re.split(r'[，,、\s]+', text.strip())
-    if len(parts) < 3:
-        return None
-    # Find the phone part (contains 8+ digits)
-    phone = None
-    phone_idx = None
-    for i, p in enumerate(parts):
-        if re.search(r'\d{8,}', p):
-            phone = p
-            phone_idx = i
-            break
-    if phone is None:
-        return None
-    remaining = [p for i, p in enumerate(parts) if i != phone_idx and p]
-    if len(remaining) < 2:
-        return None
-    # First remaining part is name, rest joined as address
-    name = remaining[0]
-    address = "".join(remaining[1:])
-    return {"customer_name": name, "customer_address": address, "customer_phone": phone}
-
-
 def handle_collect_info(state: OrderState, user_msg: str) -> dict:
-    # 1) Try regex first (fast, no API call)
-    parsed = _parse_customer_info_regex(user_msg)
-    if parsed:
-        logger.info(f"Parsed customer info via regex: {parsed}")
-        reply = (
-            f"請確認您的資料：\n"
-            f"- 名稱：{parsed['customer_name']}\n"
-            f"- 地址：{parsed['customer_address']}\n"
-            f"- 電話：{parsed['customer_phone']}\n"
-            f"正確請回覆「確認」"
-        )
-        return {
-            "messages": [AIMessage(content=reply)],
-            "workflow_phase": "confirm_info",
-            "customer_name": parsed["customer_name"],
-            "customer_address": parsed["customer_address"],
-            "customer_phone": parsed["customer_phone"],
-        }
-
-    # 2) Fallback to LLM structured output
     try:
         structured_llm = llm.with_structured_output(CustomerInfo)
         info = structured_llm.invoke(
@@ -240,20 +188,17 @@ def handle_confirm_info(state: OrderState, user_msg: str) -> dict:
 
 
 def handle_collect_items(state: OrderState, user_msg: str) -> dict:
-    # Try regex first, fallback to LLM
-    items = _parse_items_regex(user_msg)
-    if not items:
-        try:
-            structured_llm = llm.with_structured_output(OrderItems)
-            parsed = structured_llm.invoke(
-                f"從以下訊息中提取訂單品項（產品名稱和數量）。訊息：{user_msg}"
-            )
-            items = [{"product_name": i.product_name, "quantity": i.quantity} for i in parsed.items]
-        except Exception as e:
-            logger.error(f"Failed to parse order items via LLM: {e}", exc_info=True)
-            return {
-                "messages": [AIMessage(content="抱歉，我無法解析您的品項。請用格式「產品名*數量」來選購，例如「蘋果*2 牛奶*3」。")],
-            }
+    try:
+        structured_llm = llm.with_structured_output(OrderItems)
+        parsed = structured_llm.invoke(
+            f"從以下訊息中提取訂單品項（產品名稱和數量）。訊息：{user_msg}"
+        )
+        items = [{"product_name": i.product_name, "quantity": i.quantity} for i in parsed.items]
+    except Exception as e:
+        logger.error(f"Failed to parse order items via LLM: {e}", exc_info=True)
+        return {
+            "messages": [AIMessage(content="抱歉，我無法解析您的品項。請告訴我產品名稱和數量，例如「蘋果 2箱、牛奶 3箱」。")],
+        }
 
     # Validate via create_order_draft
     draft_result = create_order_draft.invoke({
@@ -282,29 +227,20 @@ def handle_confirm_items(state: OrderState, user_msg: str) -> dict:
             "workflow_phase": "collect_delivery",
         }
 
-    # User wants to modify - try to parse and merge items
-    new_items = _parse_items_regex(user_msg)
-    if new_items:
-        # Merge: keep existing items, add/update with new ones
-        existing = {i["product_name"]: i["quantity"] for i in (state.get("items") or [])}
-        for item in new_items:
-            existing[item["product_name"]] = existing.get(item["product_name"], 0) + item["quantity"]
-        merged = [{"product_name": k, "quantity": v} for k, v in existing.items()]
-    else:
-        # Use LLM to understand modification
-        try:
-            structured_llm = llm.with_structured_output(OrderItems)
-            parsed = structured_llm.invoke(
-                f"用戶目前的訂單品項為：{json.dumps(state.get('items', []), ensure_ascii=False)}\n"
-                f"用戶說：{user_msg}\n"
-                f"請根據用戶的修改意圖，產生完整的更新後品項列表。"
-            )
-            merged = [{"product_name": i.product_name, "quantity": i.quantity} for i in parsed.items]
-        except Exception as e:
-            logger.error(f"Failed to parse item modification via LLM: {e}", exc_info=True)
-            return {
-                "messages": [AIMessage(content="抱歉，我無法理解您的修改。請告訴我要修改的品項和數量。")],
-            }
+    # User wants to modify - use LLM to understand modification
+    try:
+        structured_llm = llm.with_structured_output(OrderItems)
+        parsed = structured_llm.invoke(
+            f"用戶目前的訂單品項為：{json.dumps(state.get('items', []), ensure_ascii=False)}\n"
+            f"用戶說：{user_msg}\n"
+            f"請根據用戶的修改意圖，產生完整的更新後品項列表。"
+        )
+        merged = [{"product_name": i.product_name, "quantity": i.quantity} for i in parsed.items]
+    except Exception as e:
+        logger.error(f"Failed to parse item modification via LLM: {e}", exc_info=True)
+        return {
+            "messages": [AIMessage(content="抱歉，我無法理解您的修改。請告訴我要修改的品項和數量。")],
+        }
 
     # Validate merged items
     draft_result = create_order_draft.invoke({
